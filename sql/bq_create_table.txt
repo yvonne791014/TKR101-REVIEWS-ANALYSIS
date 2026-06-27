@@ -1,0 +1,155 @@
+CREATE TABLE `REVIEW.restaurant`
+(
+    restaurant_id STRING NOT NULL
+        OPTIONS(description="餐廳編號(from apify)"),
+
+    restaurant_name STRING NOT NULL
+        OPTIONS(description="餐廳名稱"),
+
+    avg_score NUMERIC
+        OPTIONS(description="平均分數"),
+
+    reviews_count INT64
+        OPTIONS(description="評論數"),
+
+    state STRING
+        OPTIONS(description="行政區"),
+
+    category_name STRING
+        OPTIONS(description="分類"),
+
+    google_map_url STRING NOT NULL
+        OPTIONS(description="餐廳網址連結"),
+
+    created_at TIMESTAMP
+        OPTIONS(description="資料建立時間")
+)
+CLUSTER BY state;
+
+CREATE TABLE `REVIEW.low_rating_restaurant`
+(
+    restaurant_id STRING NOT NULL
+        OPTIONS(description="餐廳編號(from apify)"),
+
+    restaurant_name STRING NOT NULL
+        OPTIONS(description="餐廳名稱"),
+
+    avg_score NUMERIC
+        OPTIONS(description="平均分數"),
+
+    reviews_count INT64
+        OPTIONS(description="評論數"),
+
+    state STRING
+        OPTIONS(description="行政區"),
+
+    category_name STRING
+        OPTIONS(description="分類"),
+
+    google_map_url STRING NOT NULL
+        OPTIONS(description="餐廳網址連結"),
+
+    created_at TIMESTAMP
+        OPTIONS(description="資料建立時間"),
+
+    updated_at TIMESTAMP
+        OPTIONS(description="資料更新時間")
+)
+CLUSTER BY state;
+
+
+# 2. 建立新表（欄位已轉 STRING + 加上時間預設值）
+CREATE TABLE `REVIEW.reviews`
+(
+    review_id STRING NOT NULL
+        OPTIONS(description="評論編號(from apify)"),
+
+    restaurant_id STRING NOT NULL
+        OPTIONS(description="餐廳編號"),
+
+    review_score INT64 NOT NULL
+        OPTIONS(description="總評分1~5"),
+
+    review_content STRING
+        OPTIONS(description="評論內容"),
+
+    # 💡 這三個欄位改成 STRING 以包容空值
+    food_score STRING
+        OPTIONS(description="評分-食物"),
+
+    service_score STRING
+        OPTIONS(description="評分-服務"),
+
+    atmosphere_score STRING
+        OPTIONS(description="評分-環境氣氛"),
+
+    # 💡 加上 DEFAULT 讓 BigQuery 自動生成當下時間
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        OPTIONS(description="資料建立時間"),
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        OPTIONS(description="資料更新時間")
+)
+PARTITION BY DATE(created_at)
+CLUSTER BY restaurant_id, review_score;
+
+CREATE TABLE `REVIEW.issue_type`
+(
+    issue_type_id INT64
+        OPTIONS(description="ID"),
+
+    issue_code STRING
+        OPTIONS(description="問題類型代碼"),
+
+    issue_ename STRING
+        OPTIONS(description="問題類型英文名稱"),
+
+    issue_cname STRING
+        OPTIONS(description="問題類型中文名稱"),
+
+    key_words STRING
+        OPTIONS(description="給AI分析的關鍵字")
+);
+
+INSERT INTO `REVIEW.issue_type`
+(
+    issue_type_id,
+    issue_code,
+    issue_ename,
+    issue_cname,
+    key_words
+)
+VALUES
+(1,'F','food','食物','餐點、味道、份量、食材、菜色'),
+(2,'P','price','價格','價格、CP值、划算、偏貴'),
+(3,'S','service','服務','服務、態度、店員、出餐、漏單'),
+(4,'H','hygiene','衛生','衛生、乾淨、髒、蟑螂、廁所'),
+(5,'Q','queue','排隊','排隊、等候、候位、等很久'),
+(6,'E','environment','環境','裝潢、座位、空間、吵、冷氣、氣氛'),
+(7,'K','parking','停車','停車、交通、車位');
+
+CREATE TABLE `REVIEW.reviews_analysis`
+(
+    analyze_id INT64
+        OPTIONS(description="分析ID"),
+
+    review_id STRING NOT NULL
+        OPTIONS(description="評論編號"),
+
+    issue_type_id INT64 NOT NULL
+        OPTIONS(description="問題類型ID"),
+
+    sentiment INT64
+        OPTIONS(description="情緒 1=正向 -1=負向"),
+
+    ai_feedback_keywords STRING
+        OPTIONS(description="AI抓出的關鍵字"),
+
+    created_at TIMESTAMP
+        OPTIONS(description="資料建立時間")
+)
+PARTITION BY DATE(created_at)
+CLUSTER BY issue_type_id, sentiment;
+
+
+
