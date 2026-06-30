@@ -6,16 +6,21 @@ services:
     build: .
     image: custom-airflow-gemini:latest
     environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      # 💡 宣告 GCP 服務帳戶金鑰路徑
-      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/gcp-key.json
-      # 💡 注入 Gemini API 密鑰（會自動讀取您主機環境變數或 .env 中的 GEMINI_API_KEY）
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      # # 💡 宣告 GCP 服務帳戶金鑰路徑
+      # - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/gcp-key.json
+      # # 💡 注入 Gemini API 密鑰（會自動讀取您主機環境變數或 .env 中的 GEMINI_API_KEY）
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+        - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/.config/gcloud/application_default_credentials.json
+
     volumes:
       - ./dags:/opt/airflow/dags
+      -  C:/Users/user/AppData/Roaming/gcloud:/opt/airflow/.config/gcloud:ro
+
       # 💡 掛載 GCP 金鑰
-      - ./gcp-key.json:/opt/airflow/gcp-key.json
+      # - ./gcp-key.json:/opt/airflow/gcp-key.json
       - ./data:/opt/airflow/data
+      
     ports:
       - "8080:8080"
     command: standalone
