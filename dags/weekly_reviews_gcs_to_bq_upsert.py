@@ -10,12 +10,14 @@ from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobO
 # 並把本次處理過的 review_id 記到 queue table，提供後續語意分析使用。
 
 PROJECT_ID = "taipei-restaurant-analysis"
-DATASET_ID = "REVIEW_COPY_20260630"
+DATASET_ID = "REVIEW"
 REVIEWS_TABLE_ID = "reviews"
 STAGING_TABLE_ID = "reviews_staging_from_gcs"
 QUEUE_TABLE_ID = "review_semantic_analysis_queue"
 BUCKET_NAME = "my-airflow-data-bucket-2026"
-GCS_PREFIX = "crawler-weekly-yvonne-test/"
+
+TODAY = datetime.now().strftime("%m%d")  # 例如：0701
+GCS_PREFIX = f"crawl-weekly/vm-{TODAY}/"
 GCP_CONN_ID = "google_cloud_default"
 
 

@@ -220,34 +220,34 @@ default_args = {
 }
 
 
-with DAG(
-    dag_id=DAG_ID,
-    default_args=default_args,
-    description="Read review analysis JSONL from GCS and sync cleaned rows to BigQuery.",
-    start_date=datetime(2026, 1, 1),
-    schedule=None,
-    catchup=False,
-    max_active_runs=1,
-    tags=["gcs", "bigquery", "reviews"],
-) as dag:
+# with DAG(
+#     dag_id=DAG_ID,
+#     default_args=default_args,
+#     description="Read review analysis JSONL from GCS and sync cleaned rows to BigQuery.",
+#     start_date=datetime(2026, 1, 1),
+#     schedule=None,
+#     catchup=False,
+#     max_active_runs=1,
+#     tags=["gcs", "bigquery", "reviews"],
+# ) as dag:
 
-    @task
-    def sync_reviews_analysis() -> None:
-        logging.info("Downloading gs://%s/%s", BUCKET_NAME, SOURCE_OBJECT)
-        gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
-        raw_data = gcs_hook.download(bucket_name=BUCKET_NAME, object_name=SOURCE_OBJECT)
-        jsonl_text = raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data
+#     @task
+#     def sync_reviews_analysis() -> None:
+#         logging.info("Downloading gs://%s/%s", BUCKET_NAME, SOURCE_OBJECT)
+#         gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
+#         raw_data = gcs_hook.download(bucket_name=BUCKET_NAME, object_name=SOURCE_OBJECT)
+#         jsonl_text = raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data
 
-        rows = parse_analysis_jsonl(jsonl_text)
-        if not rows:
-            raise AirflowFailException("No valid review analysis rows were parsed from JSONL.")
+#         rows = parse_analysis_jsonl(jsonl_text)
+#         if not rows:
+#             raise AirflowFailException("No valid review analysis rows were parsed from JSONL.")
 
-        client = get_bigquery_client()
-        next_id = get_next_analyze_id(client)
-        for batch_number, batch in enumerate(chunk_rows(rows, MERGE_BATCH_SIZE), start=1):
-            logging.info("Merging batch %s with %s rows into %s (starting analyze_id=%s)", batch_number, len(batch), TARGET_TABLE, next_id)
-            next_id = merge_rows_to_target(client, batch, next_id)
+#         client = get_bigquery_client()
+#         next_id = get_next_analyze_id(client)
+#         for batch_number, batch in enumerate(chunk_rows(rows, MERGE_BATCH_SIZE), start=1):
+#             logging.info("Merging batch %s with %s rows into %s (starting analyze_id=%s)", batch_number, len(batch), TARGET_TABLE, next_id)
+#             next_id = merge_rows_to_target(client, batch, next_id)
 
-        logging.info("Sync completed. %s rows were processed.", len(rows))
+#         logging.info("Sync completed. %s rows were processed.", len(rows))
 
-    sync_reviews_analysis()
+#     sync_reviews_analysis()
