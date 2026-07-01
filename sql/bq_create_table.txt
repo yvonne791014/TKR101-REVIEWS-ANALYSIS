@@ -152,4 +152,11 @@ PARTITION BY DATE(created_at)
 CLUSTER BY issue_type_id, sentiment;
 
 
-
+CREATE TABLE `taipei-restaurant-analysis.REVIEW.review_semantic_analysis_queue`
+(
+    review_id STRING NOT NULL,
+    status STRING NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+)
+CLUSTER BY review_id;

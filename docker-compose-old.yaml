@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  airflow-standalone:
+    # 💡 讀取同目錄下的 Dockerfile 進行編譯與打包
+    build: .
+    image: custom-airflow-gemini:latest
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      # 💡 宣告 GCP 服務帳戶金鑰路徑
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/gcp-key.json
+      # 💡 注入 Gemini API 密鑰（會自動讀取您主機環境變數或 .env 中的 GEMINI_API_KEY）
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      # 💡 掛載 GCP 金鑰
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: standalone

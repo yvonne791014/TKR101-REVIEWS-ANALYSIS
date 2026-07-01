@@ -17,10 +17,13 @@ BQ_TABLE_ID = "reviews"
 LOCAL_DIR = Path("/tmp/gemini_batch")
 LOCAL_DIR.mkdir(parents=True, exist_ok=True)
 
-BATCH_SIZE = 5000
+BATCH_SIZE = 3000
 POLL_SECONDS = 60
+CREATE_BATCH_RETRY_SECONDS = 300
 
 MODEL_NAME = "gemini-2.5-flash-lite"
+
+RUN_ID = "full_130k_run"
 
 
 def init_gemini_client():
@@ -66,20 +69,17 @@ def extract_and_prepare_reviews(**context):
     sql_query = f"""
         SELECT review_id, restaurant_id, review_score, review_content
         FROM `{PROJECT_ID}.{BQ_DATASET_ID}.{BQ_TABLE_ID}`
-        WHERE review_score <= 3
-          AND review_content IS NOT NULL
+        WHERE review_content IS NOT NULL
           AND TRIM(review_content) != ''
-          limit 20;
+        ORDER BY review_id;
     """
 
     rows = bq_client.query(sql_query).result()
 
     request_files = []
-    current_file = None
-    current_path = None
     current_count = 0
     total_count = 0
-    batch_index = 0
+    batch_index = 1
 
     def open_new_file(index):
         path = LOCAL_DIR / f"gemini_batch_requests_{index:04d}.jsonl"
@@ -99,9 +99,7 @@ def extract_and_prepare_reviews(**context):
                 "contents": [
                     {
                         "role": "user",
-                        "parts": [
-                            {"text": prompt}
-                        ]
+                        "parts": [{"text": prompt}]
                     }
                 ],
                 "generationConfig": {
@@ -118,6 +116,7 @@ def extract_and_prepare_reviews(**context):
         if current_count >= BATCH_SIZE:
             current_file.close()
             request_files.append(str(current_path))
+
             batch_index += 1
             current_count = 0
             current_path, current_file = open_new_file(batch_index)
@@ -138,53 +137,25 @@ def extract_and_prepare_reviews(**context):
     context["ti"].xcom_push(key="total_count", value=total_count)
 
 
-def trigger_gemini_batch_jobs(**context):
-    print("🎬 Task 2: 上傳 JSONL 並建立 Gemini Batch 任務")
+def normalize_job_state(state):
+    if hasattr(state, "name"):
+        return state.name
+    return str(state)
 
-    client = init_gemini_client()
-    request_files = context["ti"].xcom_pull(
-        task_ids="extract_and_prepare_reviews",
-        key="request_files"
-    )
 
-    if not request_files:
-        raise ValueError("XCom 找不到 request_files")
+def is_success_state(state):
+    return state in ["SUCCEEDED", "JOB_STATE_SUCCEEDED"]
 
-    batch_jobs = []
 
-    for local_file in request_files:
-        print(f"⏳ 上傳檔案：{local_file}")
-
-        uploaded_file = client.files.upload(
-            file=local_file,
-            config={"mime_type": "application/jsonl"}
-        )
-
-        while uploaded_file.state.name != "ACTIVE":
-            print(f"等待檔案 ACTIVE，目前：{uploaded_file.state.name}")
-            time.sleep(5)
-            uploaded_file = client.files.get(name=uploaded_file.name)
-
-        print(f"✅ 檔案 ACTIVE：{uploaded_file.name}")
-        time.sleep(10)
-
-        batch_job = client.batches.create(
-            model=MODEL_NAME,
-            src=uploaded_file.name,
-            config={
-                "display_name": f"restaurant-review-batch-{int(time.time())}"
-            }
-        )
-
-        print(f"🚀 Batch 建立成功：{batch_job.name}")
-
-        batch_jobs.append({
-            "job_name": batch_job.name,
-            "source_file": uploaded_file.name,
-            "local_request_file": local_file
-        })
-
-    context["ti"].xcom_push(key="batch_jobs", value=batch_jobs)
+def is_failed_state(state):
+    return state in [
+        "FAILED",
+        "CANCELLED",
+        "EXPIRED",
+        "JOB_STATE_FAILED",
+        "JOB_STATE_CANCELLED",
+        "JOB_STATE_EXPIRED",
+    ]
 
 
 def get_output_file_name(batch_job):
@@ -201,11 +172,19 @@ def get_output_file_name(batch_job):
     if hasattr(batch_job, "output_file") and batch_job.output_file:
         return batch_job.output_file
 
-    raise ValueError("找不到 Batch output file，請查看上方 Batch job 完整資訊")
+    raise ValueError("找不到 Batch output file")
 
 
 def extract_json_from_response_line(line):
-    data = json.loads(line)
+    try:
+        data = json.loads(line)
+    except Exception as e:
+        return {
+            "review_id": None,
+            "error": "output_line_json_parse_failed",
+            "exception": str(e),
+            "raw_line": line[:1000]
+        }
 
     key = data.get("key")
 
@@ -254,30 +233,86 @@ def extract_json_from_response_line(line):
             "raw_text": text
         }
 
-def monitor_download_clean_upload(**context):
-    from google.cloud import storage
 
-    print("📬 Task 3: 監控 Batch、下載結果、清理 JSONL、上傳 GCS")
+def process_batches_sequentially(**context):
+    from google.cloud import storage
+    from google.genai import errors
+
+    print("🎬 Task 2: 逐批建立 Batch、等待完成、下載、清理、上傳 GCS")
 
     client = init_gemini_client()
     storage_client = storage.Client(project=PROJECT_ID)
+    bucket = storage_client.bucket(BUCKET_NAME)
 
     ti = context["ti"]
 
-    batch_jobs = ti.xcom_pull(
-        task_ids="trigger_gemini_batch_jobs",
-        key="batch_jobs"
+    request_files = ti.xcom_pull(
+        task_ids="extract_and_prepare_reviews",
+        key="request_files"
     )
 
-    if not batch_jobs:
-        raise ValueError("❌ XCom 找不到 batch_jobs")
+    if not request_files:
+        raise ValueError("XCom 找不到 request_files")
 
-    clean_files = []
+    uploaded_gcs_paths = []
 
-    for item in batch_jobs:
-        job_name = item["job_name"]
+    for batch_index, local_file in enumerate(request_files, start=1):
+        gcs_blob_name = (
+            f"{GCS_FOLDER}/clean_batch_results/"
+            f"{RUN_ID}/batch_{batch_index:04d}_clean.jsonl"
+        )
 
-        print(f"🔍 開始監控 Batch Job：{job_name}")
+        blob = bucket.blob(gcs_blob_name)
+        gcs_uri = f"gs://{BUCKET_NAME}/{gcs_blob_name}"
+
+        if blob.exists():
+            print(f"⏭️ 第 {batch_index} 批已存在 GCS，跳過：{gcs_uri}")
+            uploaded_gcs_paths.append(gcs_uri)
+            continue
+
+        print("======================================")
+        print(f"🚀 開始處理第 {batch_index}/{len(request_files)} 批")
+        print(f"📄 local_file = {local_file}")
+        print(f"🎯 gcs_uri = {gcs_uri}")
+        print("======================================")
+
+        uploaded_file = client.files.upload(
+            file=local_file,
+            config={"mime_type": "application/jsonl"}
+        )
+
+        while uploaded_file.state.name != "ACTIVE":
+            print(f"等待檔案 ACTIVE，目前：{uploaded_file.state.name}")
+            time.sleep(5)
+            uploaded_file = client.files.get(name=uploaded_file.name)
+
+        print(f"✅ 檔案 ACTIVE：{uploaded_file.name}")
+
+        while True:
+            try:
+                batch_job = client.batches.create(
+                    model=MODEL_NAME,
+                    src=uploaded_file.name,
+                    config={
+                        "display_name": f"restaurant-review-batch-{RUN_ID}-{batch_index:04d}"
+                    }
+                )
+
+                print(f"🚀 Batch 建立成功：{batch_job.name}")
+                break
+
+            except errors.ClientError as e:
+                error_text = str(e)
+
+                if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
+                    print("⚠️ 遇到 429 RESOURCE_EXHAUSTED")
+                    print(f"⏳ 等待 {CREATE_BATCH_RETRY_SECONDS} 秒後重試")
+                    time.sleep(CREATE_BATCH_RETRY_SECONDS)
+                    continue
+
+                raise
+
+        job_name = batch_job.name
 
         while True:
             job = client.batches.get(name=job_name)
@@ -290,42 +325,40 @@ def monitor_download_clean_upload(**context):
                 break
 
             if is_failed_state(state):
-                raise RuntimeError(f"❌ Batch 任務失敗：{job_name}, state={state}, job={job}")
+                raise RuntimeError(
+                    f"❌ Batch 任務失敗：{job_name}, state={state}, job={job}"
+                )
 
             time.sleep(POLL_SECONDS)
 
         output_file_name = get_output_file_name(job)
-        print(f"📥 準備下載 Batch 結果：{output_file_name}")
 
         safe_job_name = job_name.replace("/", "_")
-        raw_path = LOCAL_DIR / f"{safe_job_name}_raw.jsonl"
-        clean_path = LOCAL_DIR / f"{safe_job_name}_clean.jsonl"
+        raw_path = LOCAL_DIR / f"batch_{batch_index:04d}_{safe_job_name}_raw.jsonl"
+        clean_path = LOCAL_DIR / f"batch_{batch_index:04d}_clean.jsonl"
 
         try:
             client.files.download(
                 file=output_file_name,
                 download_path=str(raw_path)
             )
-            print(f"✅ 已下載結果檔：{raw_path}")
-
         except TypeError:
-            print("⚠️ SDK 不支援 download_path，改用 bytes 下載")
             output_bytes = client.files.download(file=output_file_name)
 
             with open(raw_path, "wb") as f:
                 f.write(output_bytes)
 
-            print(f"✅ 已下載結果檔：{raw_path}")
+        print(f"✅ 已下載結果檔：{raw_path}")
 
         success_count = 0
         error_count = 0
 
-        print("🧹 開始清理 Gemini output JSONL")
-
-        with open(raw_path, "r", encoding="utf-8") as infile, \
+        with open(raw_path, "rb") as infile, \
              open(clean_path, "w", encoding="utf-8") as outfile:
 
-            for line in infile:
+            for raw_line in infile:
+                line = raw_line.decode("utf-8", errors="replace")
+
                 if not line.strip():
                     continue
 
@@ -340,53 +373,24 @@ def monitor_download_clean_upload(**context):
 
         print(f"✅ 清理完成：成功 {success_count} 筆，錯誤 {error_count} 筆")
 
-        clean_files.append(str(clean_path))
-
-    timestamp = int(time.time())
-    bucket = storage_client.bucket(BUCKET_NAME)
-
-    uploaded_gcs_paths = []
-
-    for clean_file in clean_files:
-        filename = Path(clean_file).name
-
-        gcs_blob_name = (
-            f"{GCS_FOLDER}/clean_batch_results/"
-            f"test20_{timestamp}_{filename}"
-        )
-
-        blob = bucket.blob(gcs_blob_name)
-        blob.upload_from_filename(clean_file)
-
-        gcs_uri = f"gs://{BUCKET_NAME}/{gcs_blob_name}"
-        uploaded_gcs_paths.append(gcs_uri)
+        blob.upload_from_filename(clean_path)
 
         print(f"📤 已上傳：{gcs_uri}")
 
+        uploaded_gcs_paths.append(gcs_uri)
+
+        try:
+            raw_path.unlink(missing_ok=True)
+            clean_path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"⚠️ 清理暫存檔失敗：{e}")
+
+        print(f"✅ 第 {batch_index}/{len(request_files)} 批完成")
+
     ti.xcom_push(key="clean_result_gcs_paths", value=uploaded_gcs_paths)
 
-    print("🎉 Task 3 完成：全部結果已上傳 GCS")
+    print("🎉 全部批次處理完成")
 
-
-def normalize_job_state(state):
-    if hasattr(state, "name"):
-        return state.name
-    return str(state)
-
-
-def is_success_state(state):
-    return state in ["SUCCEEDED", "JOB_STATE_SUCCEEDED"]
-
-
-def is_failed_state(state):
-    return state in [
-        "FAILED",
-        "CANCELLED",
-        "EXPIRED",
-        "JOB_STATE_FAILED",
-        "JOB_STATE_CANCELLED",
-        "JOB_STATE_EXPIRED",
-    ]
 
 default_args = {
     "owner": "airflow",
@@ -397,6 +401,7 @@ default_args = {
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
+
 
 with DAG(
     "gemini_sentiment_batch_analysis",
@@ -413,14 +418,9 @@ with DAG(
     )
 
     t2 = PythonOperator(
-        task_id="trigger_gemini_batch_jobs",
-        python_callable=trigger_gemini_batch_jobs,
+        task_id="process_batches_sequentially",
+        python_callable=process_batches_sequentially,
+        execution_timeout=timedelta(hours=48),
     )
 
-    t3 = PythonOperator(
-        task_id="monitor_download_clean_upload",
-        python_callable=monitor_download_clean_upload,
-        execution_timeout=timedelta(hours=24),
-    )
-
-    t1 >> t2 >> t3
+    t1 >> t2
