@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  airflow-standalone:
+    image: asia-east1-docker.pkg.dev/taipei-restaurant-analysis/airflow-repo/restaurant-airflow:latest
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - GOOGLE_CLOUD_PROJECT=taipei-restaurant-analysis
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    env_file:
+      - .env
+    volumes:
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: standalone
+    restart: always

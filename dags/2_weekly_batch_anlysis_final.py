@@ -759,7 +759,7 @@ default_args = {
 
 
 with DAG(
-    dag_id="gemini_sentiment_batch_analysis_resumable",
+    dag_id="2_gemini_sentiment_batch_analysis_resumable",
     default_args=default_args,
     description="Resumable Gemini Batch 餐廳評論多面向情感分析",
     schedule_interval=None,

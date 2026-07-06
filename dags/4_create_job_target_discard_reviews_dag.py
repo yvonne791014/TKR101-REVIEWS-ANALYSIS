@@ -52,7 +52,7 @@ WHERE a.issue_type_id = 1
 
 
 with DAG(
-    dag_id=DAG_ID,
+    dag_id="4_create_job_target_discard_reviews",
     start_date=datetime(2026, 7, 3),
     schedule_interval=None,
     catchup=False,

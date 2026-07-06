@@ -18,7 +18,7 @@ from google.cloud import bigquery
 # 3) 單一面向 sentiment 為 null、空字串，或無法轉換成正負向時，跳過該面向，繼續處理下一個面向。
 # 4) 寫入 reviews_analysis 時，若該 review_id 已存在，會先刪除該 review_id 的既有分析資料，再新增本次解析結果。
 
-DAG_ID = "reviews_analysis_gcs_to_bigquery_streaming"
+DAG_ID = "3_reviews_analysis_gcs_to_bigquery_streaming"
 GCP_CONN_ID = "google_cloud_default"
 PROJECT_ID = "taipei-restaurant-analysis"
 DATASET_ID = "REVIEW"
@@ -391,14 +391,14 @@ default_args = {
 
 
 with DAG(
-    dag_id="update_reviews_analysis",
+    dag_id="3_update_reviews_analysis",
     default_args=default_args,
     description="Stream review analysis JSONL files from GCS and replace all old aspect rows in BigQuery by review_id.",
     start_date=datetime(2026, 1, 1),
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
-    tags=["gcs", "bigquery", "reviews"],
+    tags=["gcs", "bigquery", "reviews_analysis"],
 ) as dag:
 
     @task

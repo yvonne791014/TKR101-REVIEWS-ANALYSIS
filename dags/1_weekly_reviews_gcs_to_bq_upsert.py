@@ -52,11 +52,11 @@ REVIEW_SCHEMA = [
 
 
 with DAG(
-    dag_id="weekly_reviews_gcs_to_bigquery_upsert",
+    dag_id="1_weekly_reviews_gcs_to_bigquery_upsert",
     start_date=datetime(2026, 1, 1),
     schedule_interval=None,
     catchup=False,
-    tags=["reviews", "gcs", "bigquery"],
+    tags=["crawler", "reviews", "gcs", "bigquery"],
 ) as dag:
 
     gcs_file_list = get_gcs_files()

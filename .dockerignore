@@ -1,0 +1,7 @@
+gcp-key.json
+.env
+.git
+.gitignore
+__pycache__/
+*.pyc
+logs/
