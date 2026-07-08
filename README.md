@@ -51,3 +51,26 @@
                    │
                    ▼
         後續重新計算餐廳評分（Discard Reviews）
+
+
+
+airflow dag0 流程圖：
+
+        DAG0
+│
+├── DAG1（一次）
+│
+├── DAG2
+│
+├── DAG3
+│
+├── status != IMPORTED ?
+│       │
+│       ├── 等5分鐘
+│       │
+│       └── Trigger 下一輪 DAG0
+│
+└── status = IMPORTED
+        │
+        ▼
+      DAG4
