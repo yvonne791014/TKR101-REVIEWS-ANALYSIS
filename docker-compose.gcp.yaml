@@ -1,17 +1,80 @@
-version: '3.8'
-
 services:
-  airflow-standalone:
-    image: asia-east1-docker.pkg.dev/taipei-restaurant-analysis/airflow-repo/restaurant-airflow:latest
+  postgres:
+    image: postgres:13
     environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - GOOGLE_CLOUD_PROJECT=taipei-restaurant-analysis
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    restart: always
+
+  airflow-init:
+    image: asia-east1-docker.pkg.dev/taipei-restaurant-analysis/airflow-repo/restaurant-airflow:latest
+    depends_on:
+      - postgres
     env_file:
       - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "taipei-restaurant-analysis-airflow"
+      GOOGLE_CLOUD_PROJECT: taipei-restaurant-analysis
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    volumes:
+      - ./data:/opt/airflow/data
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create
+      --username admin
+      --password admin
+      --firstname admin
+      --lastname admin
+      --role Admin
+      --email admin@example.com || true
+      "
+
+  airflow-webserver:
+    image: asia-east1-docker.pkg.dev/taipei-restaurant-analysis/airflow-repo/restaurant-airflow:latest
+    depends_on:
+      - postgres
+      - airflow-init
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "taipei-restaurant-analysis-airflow"
+      GOOGLE_CLOUD_PROJECT: taipei-restaurant-analysis
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     volumes:
       - ./data:/opt/airflow/data
     ports:
       - "8080:8080"
-    command: standalone
+    command: webserver
     restart: always
+
+  airflow-scheduler:
+    image: asia-east1-docker.pkg.dev/taipei-restaurant-analysis/airflow-repo/restaurant-airflow:latest
+    depends_on:
+      - postgres
+      - airflow-init
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "taipei-restaurant-analysis-airflow"
+      GOOGLE_CLOUD_PROJECT: taipei-restaurant-analysis
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    volumes:
+      - ./data:/opt/airflow/data
+    command: scheduler
+    restart: always
+
+volumes:
+  postgres-db-volume:

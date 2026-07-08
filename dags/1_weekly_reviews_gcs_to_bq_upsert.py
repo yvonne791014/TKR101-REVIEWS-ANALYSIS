@@ -26,8 +26,8 @@ NEW_REVIEW_COUNT_TABLE_ID = "new_review_count_temp"
 BUCKET_NAME = "my-airflow-data-bucket-2026"
 GCP_CONN_ID = "google_cloud_default"
 
-TODAY = datetime.now().strftime("%m%d")  # 例如：0701
-GCS_PREFIX = f"crawl-weekly/vm-{TODAY}/"
+TODAY = datetime.now().strftime("%Y%m%d")  # 例如：20260701
+GCS_PREFIX = f"crawl-weekly/vm-weekly-{TODAY}/"
 
 
 def get_gcs_files():
@@ -258,6 +258,7 @@ with DAG(
                         SELECT 1
                         FROM `{PROJECT_ID}.{DATASET_ID}.{QUEUE_TABLE_ID}` AS Q
                         WHERE Q.review_id = S.review_id
+                        AND Q.status != 'SUCCESS'
                     );
                     """,
                     "useLegacySql": False,
